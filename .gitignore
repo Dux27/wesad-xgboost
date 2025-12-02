@@ -1,6 +1,6 @@
 # Ignore file for Python projects
-test.py
-numpy_test.py
+**/test.py
+**/numpy_test.py
 
 # Virtual environment
 venv/
