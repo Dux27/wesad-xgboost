@@ -112,18 +112,20 @@ def divideIsolatedSignal(signal: List, location: str, sensor: str) -> List:
 def processSensors(data: Dict, location: str, sensors: List[str], 
                    labels_dict: Dict) -> None:
     """Process all sensors for a given location."""
+    total_operations = len(sensors) * len(VALID_LABELS.values())
+    current_operation = 0
+    
     for sensor in sensors:
         for label in VALID_LABELS.values():
+            current_operation += 1
+            progress = (current_operation / total_operations) * 100
+            print(f"\r  Processing {location}: {progress:.1f}% - {sensor}/{label}", end="", flush=True)
+            
             isolated = isolateSignal(data, location, sensor, label)
             windowed = divideIsolatedSignal(isolated, location, sensor)
             labels_dict[sensor][label].extend(windowed)
-            
-            num_windows = len(labels_dict[sensor][label])
-            total_duration = num_windows * TIME_WINDOW
-            
-            # DEBUG
-            # print(f"   - Windows created: {len(windowed)}")
-            # print(f"   - Total: {num_windows} windows ({total_duration:.2f}s)")
+    
+    print()  # New line after progress
 
 
 def loadPickleFiles() -> List[str]:
@@ -139,15 +141,16 @@ def main():
     pickle_files = loadPickleFiles()
     print(f"Found {len(pickle_files)} pickle files in '{PKL_DIR}'.\n")
 
-    progress = 0
-    for pkl_file in pickle_files:
-        progress += 1
-        print(f"Preprocessing progress: {progress / len(pickle_files) * 100:.2f}% - {pkl_file}")
+    for idx, pkl_file in enumerate(pickle_files, 1):
+        progress = (idx / len(pickle_files)) * 100
+        print(f"File {idx}/{len(pickle_files)} ({progress:.1f}%): {pkl_file}")
         
         with open(os.path.join(PKL_DIR, pkl_file), "rb") as f:
             data = pickle.load(f, encoding='latin1')
 
         processSensors(data, "wrist", WRIST_SENSORS, wrist_labels)
         processSensors(data, "chest", CHEST_SENSORS, chest_labels)
+        print()  
     
+    print("Data preprocessing complete!\n")
     return wrist_labels, chest_labels
