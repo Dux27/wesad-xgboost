@@ -61,6 +61,35 @@ def edaScrFeatures(eda: np.ndarray, prefix: str, location: str) -> dict:
     return feats
 
 
+def accFeatures(acc: np.ndarray, prefix: str, location: str) -> dict:
+    """Extract the most informative features from 3-axis accelerometer data (ACC)"""
+    feats = {}
+
+    ZERO_CROSSING_THRESHOLD = 0.005  # g
+
+    acc = np.asarray(acc, dtype=float)
+    if acc.ndim != 2 or acc.shape[1] != 3:
+        raise ValueError("ACC must be a Nx3 array of [ax, ay, az].")
+
+    mag = np.sqrt(acc[:,0]**2 + acc[:,1]**2 + acc[:,2]**2)  # Magnitude
+
+    if location == "wrist":
+        mag = mag / 64.0  
+
+    feats[f"{prefix}_mag_mean"] = float(np.mean(mag))
+    feats[f"{prefix}_mag_std"] = float(np.std(mag))
+    feats[f"{prefix}_mag_energy"] = float(np.sum(mag**2))
+    feats[f"{prefix}_mag_mad"] = float(np.mean(np.abs(mag - np.mean(mag))))  # Mean Absolute Deviation
+    feats[f"{prefix}_mag_range"] = float(np.max(mag) - np.min(mag))
+    
+    diff = np.diff(mag)
+    diff[np.abs(diff) < ZERO_CROSSING_THRESHOLD] = 0
+    zero_crossings = np.sum(diff[:-1] * diff[1:] < 0)
+    feats[f"{prefix}_mag_zero_crossings"] = int(zero_crossings)
+
+    return feats
+
+
 def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) -> dict:
     '''Extract features from wrist and chest data for a given label and window index.'''
     features: dict = {}
@@ -69,7 +98,7 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
         window = wrist_data[sensor][label][index]
 
         if sensor == "ACC":
-            pass
+            features.update(accFeatures(window, "wrist_ACC", "wrist"))
         elif sensor == "BVP":
             pass
         elif sensor == "EDA":
@@ -84,7 +113,7 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
         window = chest_data[sensor][label][index]
 
         if sensor == "ACC":
-            pass
+            features.update(accFeatures(window, "chest_ACC", "chest"))
         elif sensor == "ECG":
             pass
         elif sensor == "EMG":

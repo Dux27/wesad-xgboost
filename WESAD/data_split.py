@@ -23,7 +23,7 @@ VALID_LABELS = {
 }
 
 WRIST_SENSORS = ["ACC", "BVP", "EDA", "TEMP"]
-CHEST_SENSORS = ["ECG", "EMG", "EDA", "Resp", "Temp"]
+CHEST_SENSORS = ["ACC", "ECG", "EMG", "EDA", "Resp", "Temp"]
 
 TIME_WINDOW = 10.0  # seconds
 
