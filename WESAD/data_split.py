@@ -22,8 +22,17 @@ VALID_LABELS = {
     4: "meditation"
 }
 
-WRIST_SENSORS = ["ACC", "BVP", "EDA", "TEMP"]
-CHEST_SENSORS = ["ACC", "ECG", "EMG", "EDA", "Resp", "Temp"]
+WRIST_SENSORS = ["ACC",    # Accelerometer [x, y, z] (1/64 g)
+                 "BVP",    # Blood Volume Pulse 
+                 "EDA",    # Electrodermal Activity (uS)
+                 "TEMP"]   # Skin Temperature (°C)
+
+CHEST_SENSORS = ["ACC",    # Accelerometer [x, y, z] (g)
+                 "ECG",    # Electrocardiogram (mV)
+                 "EMG",    # Electromyogram (mV)
+                 "EDA",    # Electrodermal Activity (uS)
+                 "Resp",   # Respiration (%)
+                 "Temp"]   # Skin Temperature (°C)
 
 TIME_WINDOW = 10.0  # seconds
 
