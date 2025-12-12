@@ -225,9 +225,6 @@ def emgFeatures(emg: np.ndarray) -> dict:
     '''Extract EMG features related to muscle activation / tension'''
     emg = np.asarray(emg, dtype=float).squeeze()
     feats = {}
-
-    if emg.ndim != 1:
-        raise ValueError("EMG must be a 1D array.")
     
     fs = data_split.getSensorFrequency("chest", "EMG")
     emg_clean = nk.signal_filter(emg, 
@@ -243,6 +240,60 @@ def emgFeatures(emg: np.ndarray) -> dict:
 
     energy = np.sum(emg_clean ** 2)
     feats["chest_EMG_energy"] = float(energy)
+
+    return feats
+
+
+def respFeatures(resp: np.ndarray) -> dict:
+    """
+    Minimal RESP features for 10-second windows.
+    Keeps only stable signal-based features + peaks_count (quality).
+    No rate / periods / regularity / peak amplitudes (they are often 0 in 10s windows).
+    """
+
+    resp = np.asarray(resp, dtype=float).squeeze()
+    feats = {}
+
+    fs = data_split.getSensorFrequency("chest", "Resp")
+
+    def slope_feature(x: np.ndarray) -> float:
+        if x.size < 2:
+            return 0.0
+        t = np.arange(x.size) / float(fs)
+        a, _ = np.polyfit(t, x, 1)
+        return float(a)
+
+    # Defaults (always present, never crash)
+    feats["chest_Resp_peaks_count"] = 0
+    feats["chest_Resp_std"] = 0.0
+    feats["chest_Resp_range"] = 0.0
+    feats["chest_Resp_energy"] = 0.0
+    feats["chest_Resp_slope"] = 0.0
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            signals, info = nk.rsp_process(resp, sampling_rate=fs)
+
+        rsp_clean = np.asarray(signals["RSP_Clean"].values, dtype=float)
+
+        peaks = np.asarray(info.get("RSP_Peaks", []), dtype=int)
+        peaks = peaks[peaks >= 0]
+        feats["chest_Resp_peaks_count"] = int(peaks.size)
+
+    except Exception:
+        # Fallback: still get a cleaned signal
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            rsp_clean = np.asarray(nk.rsp_clean(resp, sampling_rate=fs), dtype=float)
+
+        # peaks_count unknown -> keep 0
+
+    # Signal-only robust features (always computed)
+    feats["chest_Resp_std"] = float(np.std(rsp_clean))
+    feats["chest_Resp_range"] = float(np.max(rsp_clean) - np.min(rsp_clean))
+    feats["chest_Resp_energy"] = float(np.sum(rsp_clean ** 2))
+    feats["chest_Resp_slope"] = slope_feature(rsp_clean)
 
     return feats
 
@@ -287,7 +338,7 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
             features.update(basicStats(window, "chest_Temp"))
             features.update(slopeFeature(window, "chest_Temp", "chest", "Temp"))
         elif sensor == "Resp":
-            pass
+            features.update(respFeatures(window))
     
     if ecg_signal is not None and bvp_signal is not None:
         features.update(pttFeatures(ecg_signal, bvp_signal))
@@ -325,6 +376,8 @@ def main():
     print()  
     print(f"\nDataset size: {len(dataset)} samples")
     print("First sample:", dataset[0])
+    print(dataset[140])
+    print(dataset[230])
     print("Feature vector length:", len(dataset[0]) - 1)
     return dataset
 
