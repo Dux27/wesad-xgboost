@@ -1,6 +1,9 @@
+import os
+import random
 import warnings
 import data_split
 import numpy as np
+import pandas as pd
 import neurokit2 as nk
 
 def basicStats(x: np.ndarray, prefix: str) -> dict:
@@ -36,27 +39,35 @@ def edaScrFeatures(eda: np.ndarray, prefix: str, location: str) -> dict:
     eda = np.asarray(eda, dtype=float).squeeze()
     feats = {}
 
+    feats[f"{prefix}_scr_count"] = 0
+    feats[f"{prefix}_scr_mean_amp"] = 0.0
+    feats[f"{prefix}_scr_max_amp"] = 0.0
+    feats[f"{prefix}_scr_sum_amp"] = 0.0
+
     freq = data_split.getSensorFrequency(location, "EDA")
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        signals, info = nk.eda_process(eda, sampling_rate=freq)
-
-    scr_amplitudes = np.asarray(signals["SCR_Amplitude"].values, dtype=float)
-    scr_amplitudes = scr_amplitudes[~np.isnan(scr_amplitudes)]
-    scr_amplitudes = scr_amplitudes[scr_amplitudes > 0]
-
-    if scr_amplitudes.size == 0:
-        feats[f"{prefix}_scr_count"] = 0
-        feats[f"{prefix}_scr_mean_amp"] = 0.0
-        feats[f"{prefix}_scr_max_amp"] = 0.0
-        feats[f"{prefix}_scr_sum_amp"] = 0.0
+    if eda.size < 10 or np.std(eda) < 1e-8:
         return feats
 
-    feats[f"{prefix}_scr_count"] = int(scr_amplitudes.size)
-    feats[f"{prefix}_scr_mean_amp"] = float(np.mean(scr_amplitudes))
-    feats[f"{prefix}_scr_max_amp"] = float(np.max(scr_amplitudes))
-    feats[f"{prefix}_scr_sum_amp"] = float(np.sum(scr_amplitudes))
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            signals, info = nk.eda_process(eda, sampling_rate=freq)
+
+        scr_amplitudes = np.asarray(signals["SCR_Amplitude"].values, dtype=float)
+        scr_amplitudes = scr_amplitudes[~np.isnan(scr_amplitudes)]
+        scr_amplitudes = scr_amplitudes[scr_amplitudes > 0]
+
+        if scr_amplitudes.size == 0:
+            return feats
+
+        feats[f"{prefix}_scr_count"] = int(scr_amplitudes.size)
+        feats[f"{prefix}_scr_mean_amp"] = float(np.mean(scr_amplitudes))
+        feats[f"{prefix}_scr_max_amp"] = float(np.max(scr_amplitudes))
+        feats[f"{prefix}_scr_sum_amp"] = float(np.sum(scr_amplitudes))
+
+    except (ValueError, IndexError, KeyError) as e:
+        pass
 
     return feats
 
@@ -90,12 +101,12 @@ def accFeatures(acc: np.ndarray, prefix: str, location: str) -> dict:
     return feats
 
 
-def ecgFeatures(ecg: np.ndarray, location: str) -> dict:
+def ecgFeatures(ecg: np.ndarray) -> dict:
     '''Extract ECG-based features for stress detection'''
     ecg = np.asarray(ecg, dtype=float).squeeze()
     feats = {}
 
-    freq = data_split.getSensorFrequency(location, "ECG")
+    freq = data_split.getSensorFrequency("chest", "ECG")
     signals, info = nk.ecg_process(ecg, sampling_rate=freq)
 
     heart_rate = np.asarray(signals["ECG_Rate"].values, dtype=float)
@@ -138,36 +149,45 @@ def ecgFeatures(ecg: np.ndarray, location: str) -> dict:
     return feats
 
 
-def bvpFeatures(bvp: np.ndarray, location: str) -> dict:
+def bvpFeatures(bvp: np.ndarray) -> dict:
     '''Extract BVP/PPG-based features for stress detection'''
     bvp = np.asarray(bvp, dtype=float).squeeze()
     feats = {}
 
-    freq = data_split.getSensorFrequency(location, "BVP")
-    signals, info = nk.ppg_process(bvp, sampling_rate=freq)
+    fs = data_split.getSensorFrequency("wrist", "BVP")
 
-    heart_rate = np.asarray(signals["PPG_Rate"].values, dtype=float)
-    heart_rate = heart_rate[~np.isnan(heart_rate)]
-    heart_rate = heart_rate[heart_rate > 0]
+    feats["wrist_BVP_hr_mean"] = 0.0
+    feats["wrist_BVP_hr_std"] = 0.0
+    feats["wrist_BVP_ppg_amp_mean"] = 0.0
+    feats["wrist_BVP_ppg_amp_std"] = 0.0
 
-    if heart_rate.size == 0:
-        feats["wrist_BVP_hr_mean"] = 0.0
-        feats["wrist_BVP_hr_std"] = 0.0
-    else:
-        feats["wrist_BVP_hr_mean"] = float(np.mean(heart_rate))
-        feats["wrist_BVP_hr_std"] = float(np.std(heart_rate))
-    ppg_clean = np.asarray(signals["PPG_Clean"].values, dtype=float)
-    r_peaks = np.asarray(info["PPG_Peaks"], dtype=int) 
+    # Reject flat signals
+    if bvp.size < 10 or np.std(bvp) < 1e-8:
+        return feats
 
-    if r_peaks.size > 0:
-        peak_values = ppg_clean[r_peaks]
-        feats["wrist_BVP_ppg_amp_mean"] = float(np.mean(peak_values))
-        feats["wrist_BVP_ppg_amp_std"] = float(np.std(peak_values))
-    else:
-        feats["wrist_BVP_ppg_amp_mean"] = 0.0
-        feats["wrist_BVP_ppg_amp_std"] = 0.0
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ppg_clean = nk.ppg_clean(bvp, sampling_rate=fs)
 
-    return feats
+            _, info = nk.ppg_peaks(ppg_clean, sampling_rate=fs)
+            peaks = np.asarray(info.get("PPG_Peaks", []), dtype=int)
+
+        if peaks.size >= 2:
+            ibi = np.diff(peaks) / float(fs)  
+            hr = 60.0 / ibi
+            feats["wrist_BVP_hr_mean"] = float(np.mean(hr))
+            feats["wrist_BVP_hr_std"] = float(np.std(hr))
+
+        if peaks.size > 0:
+            peak_vals = np.asarray(ppg_clean)[peaks]
+            feats["wrist_BVP_ppg_amp_mean"] = float(np.mean(peak_vals))
+            feats["wrist_BVP_ppg_amp_std"] = float(np.std(peak_vals))
+
+        return feats
+
+    except Exception:
+        return feats
 
 
 def pttFeatures(ecg, ppg) -> dict:
@@ -175,50 +195,62 @@ def pttFeatures(ecg, ppg) -> dict:
     ppg = np.asarray(ppg, dtype=float).squeeze()
     feats = {}
 
+    if ecg.ndim != 1 or ppg.ndim != 1 or ecg.size < 10 or ppg.size < 10:
+        return feats
+
     fs_ecg = data_split.getSensorFrequency("chest", "ECG")
     fs_ppg = data_split.getSensorFrequency("wrist", "BVP")
 
-    # R peaks (ECG)
-    ecg_clean = nk.ecg_clean(ecg, sampling_rate=fs_ecg)
-    r_peaks = nk.ecg_peaks(ecg_clean, sampling_rate=fs_ecg)[1]["ECG_R_Peaks"]
+    feats["PTT_mean"] = 0.0
+    feats["PTT_std"] = 0.0
+    feats["PTT_median"] = 0.0
 
-    # PPG peaks 
-    signals_ppg, info_ppg = nk.ppg_process(ppg, sampling_rate=fs_ppg)
-    ppg_peaks = info_ppg["PPG_Peaks"]
-
-    if len(r_peaks) < 2 or len(ppg_peaks) < 2:
-        feats[f"PTT_mean"] = 0
-        feats[f"PTT_std"] = 0
-        feats[f"PTT_median"] = 0
+    # Reject flat signals
+    if np.std(ecg) < 1e-8 or np.std(ppg) < 1e-8:
         return feats
 
-    # Convert to time (seconds)
-    t_r = r_peaks / fs_ecg
-    t_p = ppg_peaks / fs_ppg
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-    # Match R with next PPG peak
-    ptt = []
-    for r in t_r:
-        nxt = t_p[t_p > r]
-        if len(nxt):
-            ptt.append(nxt[0] - r)
+            ecg_clean = nk.ecg_clean(ecg, sampling_rate=fs_ecg)
+            _, info_ecg = nk.ecg_peaks(ecg_clean, sampling_rate=fs_ecg)
+            rpeaks = np.asarray(info_ecg.get("ECG_R_Peaks", []), dtype=int)
 
-    ptt = np.array(ptt)
+            ppg_clean = nk.ppg_clean(ppg, sampling_rate=fs_ppg)
+            _, info_ppg = nk.ppg_peaks(ppg_clean, sampling_rate=fs_ppg)
+            ppg_peaks = np.asarray(info_ppg.get("PPG_Peaks", []), dtype=int)
 
-    # Clean invalid values
-    ptt = ptt[(ptt > 0.05) & (ptt < 0.5)]  # 50–500 ms
+        if rpeaks.size < 2 or ppg_peaks.size < 2:
+            return feats
 
-    if len(ptt) == 0:
-        feats[f"PTT_mean"] = 0
-        feats[f"PTT_std"] = 0
-        feats[f"PTT_median"] = 0
+        t_r = rpeaks / float(fs_ecg)
+        t_p = ppg_peaks / float(fs_ppg)
+
+        ptt = []
+        j = 0
+        for r in t_r:
+            while j < len(t_p) and t_p[j] <= r:
+                j += 1
+            if j >= len(t_p):
+                break
+            ptt.append(t_p[j] - r)
+
+        ptt = np.asarray(ptt, dtype=float)
+
+        ptt = ptt[(ptt > 0.05) & (ptt < 0.6)] 
+
+        if ptt.size == 0:
+            return feats
+
+        feats["PTT_mean"] = float(np.mean(ptt))
+        feats["PTT_std"] = float(np.std(ptt))
+        feats["PTT_median"] = float(np.median(ptt))
+
         return feats
 
-    feats[f"PTT_mean"] = float(np.mean(ptt))
-    feats[f"PTT_std"] = float(np.std(ptt))
-    feats[f"PTT_median"] = float(np.median(ptt))
-
-    return feats
+    except Exception:
+        return feats
 
 
 def emgFeatures(emg: np.ndarray) -> dict:
@@ -313,7 +345,7 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
             features.update(accFeatures(window, "wrist_ACC", "wrist"))
         elif sensor == "BVP":
             bvp_signal = window 
-            features.update(bvpFeatures(window, location="wrist"))
+            features.update(bvpFeatures(window))
         elif sensor == "EDA":
             features.update(basicStats(window, "wrist_EDA"))
             features.update(slopeFeature(window, "wrist_EDA", "wrist", "EDA"))
@@ -327,7 +359,7 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
 
         if sensor == "ECG":
             ecg_signal = window  
-            features.update(ecgFeatures(window, location="chest"))
+            features.update(ecgFeatures(window))
         elif sensor == "EMG":
             features.update(emgFeatures(window))
         elif sensor == "EDA":
@@ -348,24 +380,49 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
     return features
 
 
+def saveToParquet(data, output_dir):
+    '''Save extracted features and labels to Parquet files.'''
+    os.makedirs(output_dir, exist_ok=True)
+
+    df = pd.DataFrame(data)
+
+    X = df.drop(columns=["label"])
+    y = df[["label"]]
+
+    X.to_parquet(os.path.join(output_dir, "X.parquet"), index=False)
+    y.to_parquet(os.path.join(output_dir, "y.parquet"), index=False)
+
+
+def getNumWindows(data_dict: dict, label: str) -> int:
+    """Get minimum number of windows available across all sensors for a given label."""
+    lengths = []
+    for sensor in data_dict.keys():
+        if label in data_dict[sensor]:
+            lengths.append(len(data_dict[sensor][label]))
+    return min(lengths) if lengths else 0
+
+
 def main():
     dataset: list[dict] = []
     wrist_data, chest_data = data_split.main()
 
-    # Calculate total number of samples
-    total_samples = sum(
-        len(wrist_data["EDA"][label]) 
-        for label in data_split.VALID_LABELS.values()
-    )
+    # Calculate total number of samples based on minimum windows across all sensors
+    total_samples = 0
+    for label in data_split.VALID_LABELS.values():
+        n_wrist = getNumWindows(wrist_data, label)
+        n_chest = getNumWindows(chest_data, label)
+        n = min(n_wrist, n_chest)
+        total_samples += n
     
     current_sample = 0
     print(f"\nExtracting features from {total_samples} samples...")
 
     for label_category in data_split.VALID_LABELS.values():
-        if len(wrist_data["EDA"][label_category]) != len(chest_data["EDA"][label_category]):
-            raise ValueError(f"Mismatch in number of windows for label '{label_category}' between wrist and chest EDA sensors.")
+        n_wrist = getNumWindows(wrist_data, label_category)
+        n_chest = getNumWindows(chest_data, label_category)
+        n_windows = min(n_wrist, n_chest)
         
-        for i in range(len(wrist_data['EDA'][label_category])):
+        for i in range(n_windows):
             current_sample += 1
             progress = (current_sample / total_samples) * 100
             print(f"\rFeature extraction: {progress:.1f}% ({current_sample}/{total_samples}) - {label_category}", end="", flush=True)
@@ -374,12 +431,11 @@ def main():
             dataset.append(extracted_features)
 
     print()  
-    print(f"\nDataset size: {len(dataset)} samples")
-    print("First sample:", dataset[0])
-    print(dataset[140])
-    print(dataset[230])
     print("Feature vector length:", len(dataset[0]) - 1)
-    return dataset
+    print(f"Total samples extracted: {len(dataset)}")
+
+    random.shuffle(dataset)
+    saveToParquet(dataset, output_dir="WESAD/train_8s")
 
 
 if __name__ == "__main__":

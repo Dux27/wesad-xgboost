@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 from typing import List, Dict
 
-PKL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_test")  
+PKL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_train")  
 
 LABELING_FREQ = 700
 FREQUENCIES_CHEST = 700
@@ -31,10 +31,10 @@ CHEST_SENSORS = ["ACC",    # Accelerometer [x, y, z] (g)
                  "ECG",    # Electrocardiogram (mV)
                  "EMG",    # Electromyogram (mV)
                  "EDA",    # Electrodermal Activity (uS)
-                 "Resp",   # Respiration (%)
+                 "Resp",   # Respiration 
                  "Temp"]   # Skin Temperature (°C)
 
-TIME_WINDOW = 10.0  # seconds
+TIME_WINDOW = 8.0  # seconds
 
 
 def initializeLabelsDict(sensors: List[str]) -> Dict:
@@ -88,9 +88,9 @@ def isolateSignal(data: Dict, location: str, sensor: str, label: str) -> np.ndar
 
     # Calculate and print duration
     freq = getSensorFrequency(location, sensor)
-    duration = isolated_data.shape[0] / freq
     
     # DEBUG
+    # duration = isolated_data.shape[0] / freq
     # print(f"  {location:5s} {sensor:4s} {label:10s}: {duration:7.2f}s")
 
     return isolated_data
@@ -118,8 +118,7 @@ def divideIsolatedSignal(signal: List, location: str, sensor: str) -> List:
     return list(divided_signal)
 
 
-def processSensors(data: Dict, location: str, sensors: List[str], 
-                   labels_dict: Dict) -> None:
+def processSensors(data: Dict, location: str, sensors: List[str], labels_dict: Dict) -> None:
     """Process all sensors for a given location."""
     total_operations = len(sensors) * len(VALID_LABELS.values())
     current_operation = 0
@@ -134,7 +133,7 @@ def processSensors(data: Dict, location: str, sensors: List[str],
             windowed = divideIsolatedSignal(isolated, location, sensor)
             labels_dict[sensor][label].extend(windowed)
     
-    print()  # New line after progress
+    print()  
 
 
 def loadPickleFiles() -> List[str]:
