@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 from typing import List, Dict
 
-PKL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_train")  
+PKL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_val")  
 
 LABELING_FREQ = 700
 FREQUENCIES_CHEST = 700
@@ -34,7 +34,7 @@ CHEST_SENSORS = ["ACC",    # Accelerometer [x, y, z] (g)
                  "Resp",   # Respiration 
                  "Temp"]   # Skin Temperature (°C)
 
-TIME_WINDOW = 15.0  # seconds
+TIME_WINDOW = 12.0  # seconds
 
 
 def initializeLabelsDict(sensors: List[str]) -> Dict:

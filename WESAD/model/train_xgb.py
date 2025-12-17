@@ -30,10 +30,14 @@ EARLY_STOPPING_ROUNDS = 50
 RANDOM_STATE = 29
 
 
+THRESHOLDS = {
+    "amusement": 0.37
+}
+
+
 def load_Xy(dir_path: str, label_col: str):
     X = pd.read_parquet(os.path.join(dir_path, "X.parquet"))
     y_df = pd.read_parquet(os.path.join(dir_path, "y.parquet"))
-
     y = y_df[label_col]
     
     # Remove subject column
@@ -41,6 +45,17 @@ def load_Xy(dir_path: str, label_col: str):
         X = X.drop(columns=['subject'])
 
     return X, y
+
+
+def predict_with_threshold(model, X, threshold_dict, le):
+    proba = model.predict_proba(X)
+    pred = np.argmax(proba, axis=1) 
+    
+    for class_name, threshold in threshold_dict.items():
+        class_idx = list(le.classes_).index(class_name)
+        pred = np.where(proba[:, class_idx] > threshold, class_idx, pred)
+    
+    return pred
 
 
 def main():
@@ -87,12 +102,12 @@ def main():
         sample_weight=sample_weight,
     )
 
-    val_pred = model.predict(X_val)
+    val_pred = predict_with_threshold(model, X_val, THRESHOLDS, le)
 
     macro_f1 = f1_score(y_val_enc, val_pred, average="macro")
     bal_acc = balanced_accuracy_score(y_val_enc, val_pred)
 
-    print("\nValidation classification report:")
+    print("Validation classification report:")
     print(classification_report(y_val_enc, val_pred, target_names=le.classes_))
 
     print("\nValidation confusion matrix:")
@@ -112,6 +127,7 @@ def main():
         "best_score": float(getattr(model, "best_score", np.nan)),
         "macro_f1": float(macro_f1),
         "balanced_accuracy": float(bal_acc),
+        "thresholds": THRESHOLDS,  
         "params": {
             "n_estimators": N_ESTIMATORS,
             "learning_rate": LEARNING_RATE,

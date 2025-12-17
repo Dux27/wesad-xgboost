@@ -9,9 +9,11 @@ from sklearn.metrics import classification_report, confusion_matrix, f1_score, b
 
 from xgboost import XGBClassifier
 
+TIME_WINDOW = 15.0  
+CAL = True
 
-TRAIN_DIR = "WESAD/model/train_10s_cal"
-VAL_DIR   = "WESAD/model/val_10s_cal"
+TRAIN_DIR = f"WESAD/model/train_{int(TIME_WINDOW)}s{'_cal' if CAL else ''}"
+VAL_DIR   = f"WESAD/model/val_{int(TIME_WINDOW)}s{'_cal' if CAL else ''}"
 OUT_DIR   = "WESAD/model/out"
 
 N_ESTIMATORS = 500

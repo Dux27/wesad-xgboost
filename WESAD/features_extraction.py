@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import neurokit2 as nk
 
-OUT_DIR = "WESAD/model/train_15s_cal"
 CAL = True
+OUT_DIR = f"WESAD/model/{data_split.PKL_DIR.split(os.sep)[-1].split('_')[-1]}_{int(data_split.TIME_WINDOW)}s{'_cal' if CAL else ''}"
 
 def basicStats(x: np.ndarray, prefix: str) -> dict:
     '''Calculate basic statistical features of the signal x'''
