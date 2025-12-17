@@ -3,29 +3,31 @@ import json
 import numpy as np
 import pandas as pd
 
-from xgboost import XGBClassifier
 from sklearn.preprocessing import LabelEncoder
-from lightgbm import LGBMClassifier
-from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, 
-from sklearn.metrics import classification_report, confusion_matrix, f1_score, balanced_accuracy_score
 from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, balanced_accuracy_score
 
-TRAIN_DIR = "WESAD/train"
-VAL_DIR   = "WESAD/val"
-OUT_DIR   = "WESAD/out"
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 
-N_ESTIMATORS = 200
-LEARNING_RATE = 0.04
-MAX_DEPTH = 4
+
+TRAIN_DIR = "WESAD/model/train_10s_cal"
+VAL_DIR   = "WESAD/model/val_10s_cal"
+OUT_DIR   = "WESAD/model/out"
+
+N_ESTIMATORS = 500
+LEARNING_RATE = 0.03
+MAX_DEPTH = 6
 SUBSAMPLE = 0.8
 COLSAMPLE_BYTREE = 0.8
 REG_LAMBDA = 2.0
 REG_ALPHA = 0.5
 GAMMA = 0.1
-MIN_CHILD_WEIGHT = 3.0
-TREE_METHOD = "approx"
+MIN_CHILD_WEIGHT = 3.7
+TREE_METHOD = "hist"  
 EARLY_STOPPING_ROUNDS = 50
-RANDOM_STATE = 27
+RANDOM_STATE = 29
 
 
 def load_Xy(dir_path: str, label_col: str):
@@ -33,6 +35,10 @@ def load_Xy(dir_path: str, label_col: str):
     y_df = pd.read_parquet(os.path.join(dir_path, "y.parquet"))
 
     y = y_df[label_col]
+    
+    # Remove subject column
+    if 'subject' in X.columns:
+        X = X.drop(columns=['subject'])
 
     return X, y
 
@@ -76,6 +82,8 @@ def main():
     model.fit(
         X_train,
         y_train_enc,
+        eval_set=[(X_val, y_val_enc)],
+        verbose=10,
         sample_weight=sample_weight,
     )
 
@@ -115,7 +123,7 @@ def main():
             "gamma": GAMMA,
             "min_child_weight": MIN_CHILD_WEIGHT,
             "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
-            "tree_method": "hist",
+            "tree_method": TREE_METHOD,
         }
     }
 

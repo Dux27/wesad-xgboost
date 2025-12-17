@@ -6,6 +6,9 @@ import numpy as np
 import pandas as pd
 import neurokit2 as nk
 
+OUT_DIR = "WESAD/model/train_15s_cal"
+CAL = True
+
 def basicStats(x: np.ndarray, prefix: str) -> dict:
     '''Calculate basic statistical features of the signal x'''
     x = np.asarray(x).squeeze()   # Ensure x is a numpy array and flatten to 1D
@@ -39,7 +42,7 @@ def edaScrFeatures(eda: np.ndarray, prefix: str, location: str) -> dict:
     eda = np.asarray(eda, dtype=float).squeeze()
     feats = {}
 
-    feats[f"{prefix}_scr_count"] = 0
+    feats[f"{prefix}_scr_count_nc"] = 0
     feats[f"{prefix}_scr_mean_amp"] = 0.0
     feats[f"{prefix}_scr_max_amp"] = 0.0
     feats[f"{prefix}_scr_sum_amp"] = 0.0
@@ -61,7 +64,7 @@ def edaScrFeatures(eda: np.ndarray, prefix: str, location: str) -> dict:
         if scr_amplitudes.size == 0:
             return feats
 
-        feats[f"{prefix}_scr_count"] = int(scr_amplitudes.size)
+        feats[f"{prefix}_scr_count_nc"] = int(scr_amplitudes.size)
         feats[f"{prefix}_scr_mean_amp"] = float(np.mean(scr_amplitudes))
         feats[f"{prefix}_scr_max_amp"] = float(np.max(scr_amplitudes))
         feats[f"{prefix}_scr_sum_amp"] = float(np.sum(scr_amplitudes))
@@ -87,16 +90,16 @@ def accFeatures(acc: np.ndarray, prefix: str, location: str) -> dict:
     if location == "wrist":
         mag = mag / 64.0  
 
-    feats[f"{prefix}_mag_mean"] = float(np.mean(mag))
-    feats[f"{prefix}_mag_std"] = float(np.std(mag))
-    feats[f"{prefix}_mag_energy"] = float(np.sum(mag**2))
-    feats[f"{prefix}_mag_mad"] = float(np.mean(np.abs(mag - np.mean(mag))))  # Mean Absolute Deviation
-    feats[f"{prefix}_mag_range"] = float(np.max(mag) - np.min(mag))
+    feats[f"{prefix}_mag_mean_nc"] = float(np.mean(mag))
+    feats[f"{prefix}_mag_std_nc"] = float(np.std(mag))
+    feats[f"{prefix}_mag_energy_nc"] = float(np.sum(mag**2))
+    feats[f"{prefix}_mag_mad_nc"] = float(np.mean(np.abs(mag - np.mean(mag))))  # Mean Absolute Deviation
+    feats[f"{prefix}_mag_range_nc"] = float(np.max(mag) - np.min(mag))
     
     diff = np.diff(mag)
     diff[np.abs(diff) < ZERO_CROSSING_THRESHOLD] = 0
     zero_crossings = np.sum(diff[:-1] * diff[1:] < 0)
-    feats[f"{prefix}_mag_zero_crossings"] = int(zero_crossings)
+    feats[f"{prefix}_mag_zero_crossings_nc"] = int(zero_crossings)
 
     return feats
 
@@ -271,7 +274,7 @@ def emgFeatures(emg: np.ndarray) -> dict:
     feats["chest_EMG_mean_abs"] = float(mean_abs)
 
     energy = np.sum(emg_clean ** 2)
-    feats["chest_EMG_energy"] = float(energy)
+    feats["chest_EMG_energy_nc"] = float(energy)
 
     return feats
 
@@ -296,7 +299,7 @@ def respFeatures(resp: np.ndarray) -> dict:
         return float(a)
 
     # Defaults (always present, never crash)
-    feats["chest_Resp_peaks_count"] = 0
+    feats["chest_Resp_peaks_count_nc"] = 0
     feats["chest_Resp_std"] = 0.0
     feats["chest_Resp_range"] = 0.0
     feats["chest_Resp_energy"] = 0.0
@@ -311,7 +314,7 @@ def respFeatures(resp: np.ndarray) -> dict:
 
         peaks = np.asarray(info.get("RSP_Peaks", []), dtype=int)
         peaks = peaks[peaks >= 0]
-        feats["chest_Resp_peaks_count"] = int(peaks.size)
+        feats["chest_Resp_peaks_count_nc"] = int(peaks.size)
 
     except Exception:
         # Fallback: still get a cleaned signal
@@ -330,9 +333,11 @@ def respFeatures(resp: np.ndarray) -> dict:
     return feats
 
 
-def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) -> dict:
-    '''Extract features from wrist and chest data for a given label and window index.'''
+def extractFeatures(subject: str, label: str, wrist_data: dict, chest_data: dict, index: int) -> dict:
+    '''Extract features from wrist and chest data for a given subject, label, and window index.'''
     features: dict = {}
+    features["subject"] = subject
+    features["label"] = label
 
     # Store signals for PTT calculation
     ecg_signal = None
@@ -357,7 +362,9 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
     for sensor in chest_data.keys():
         window = chest_data[sensor][label][index]
 
-        if sensor == "ECG":
+        if sensor == "ACC":
+            features.update(accFeatures(window, "chest_ACC", "chest"))
+        elif sensor == "ECG":
             ecg_signal = window  
             features.update(ecgFeatures(window))
         elif sensor == "EMG":
@@ -375,9 +382,74 @@ def extractFeatures(label: str, wrist_data: dict, chest_data: dict, index: int) 
     if ecg_signal is not None and bvp_signal is not None:
         features.update(pttFeatures(ecg_signal, bvp_signal))
     
-    features["label"] = label
-    
     return features
+
+
+def calibrateBySubjectBaseline(dataset: list[dict], eps=1e-6) -> list[dict]:
+    """
+    Calibrate features using z-score normalization per subject based on baseline.
+    Returns: calibrated dataset with both original and calibrated features.
+    """
+    df = pd.DataFrame(dataset)
+    
+    # Split features: calibrate-able vs non-calibrate-able
+    all_feat_cols = [c for c in df.columns if c not in ["subject", "label"]]
+    feat_cols = [c for c in all_feat_cols if not c.endswith("_nc")]  # TO BE CALIBRATED
+    nc_cols = [c for c in all_feat_cols if c.endswith("_nc")]        # NO CALIBRATION
+    
+    baseline_df = df[df["label"] == "baseline"].copy()
+    
+    # Calculate per-subject baseline statistics (only for calibrate-able features)
+    baseline_mean = baseline_df.groupby("subject")[feat_cols].mean()
+    baseline_std = baseline_df.groupby("subject")[feat_cols].std()
+    
+    # Global fallback for subjects with insufficient baseline data
+    global_mean = baseline_df[feat_cols].mean()
+    global_std = baseline_df[feat_cols].std()
+
+    calibrated_features = []
+    
+    for subject in df["subject"].unique():
+        subject_mask = df["subject"] == subject
+        subject_data = df[subject_mask].copy()
+
+        if subject in baseline_mean.index:
+            mu = baseline_mean.loc[subject]
+            sigma = baseline_std.loc[subject]
+        else:
+            mu = global_mean
+            sigma = global_std
+        
+        # Replace zero std with global std to avoid division by zero
+        sigma = sigma.replace(0, np.nan).fillna(global_std)
+        
+        # Z-score normalization (only for non-_nc features)
+        calibrated = (subject_data[feat_cols] - mu) / (sigma + eps)
+        calibrated = calibrated.replace([np.inf, -np.inf], np.nan).fillna(0)
+        
+        # Rename calibrated columns
+        calibrated.columns = [f"{c}_cal" for c in feat_cols]
+        
+        # Combine: subject + label + _nc features + original features + calibrated features
+        subject_calibrated = pd.concat([
+            subject_data[["subject", "label"]],
+            subject_data[nc_cols],      # _nc features (original, no calibration)
+            subject_data[feat_cols],    # Original calibrate-able features
+            calibrated                  # Calibrated features
+        ], axis=1)
+        
+        calibrated_features.append(subject_calibrated)
+    
+    # Combine all subjects
+    df_calibrated = pd.concat(calibrated_features, ignore_index=True)
+    
+    print(f"\n Calibrated {len(feat_cols)} features per subject using baseline")
+    print(f" - Non-calibrated (_nc): {len(nc_cols)}")
+    print(f" - Original: {len(feat_cols)}")
+    print(f" - Calibrated: {len(feat_cols)}")
+    print(f"  Total features: {len(df_calibrated.columns) - 2}")
+    
+    return df_calibrated.to_dict('records')
 
 
 def saveToParquet(data, output_dir):
@@ -408,34 +480,44 @@ def main():
 
     # Calculate total number of samples based on minimum windows across all sensors
     total_samples = 0
-    for label in data_split.VALID_LABELS.values():
-        n_wrist = getNumWindows(wrist_data, label)
-        n_chest = getNumWindows(chest_data, label)
-        n = min(n_wrist, n_chest)
-        total_samples += n
+    for subject in wrist_data.keys():  
+        for label in data_split.VALID_LABELS.values():
+            n_wrist = getNumWindows(wrist_data[subject], label)  
+            n_chest = getNumWindows(chest_data[subject], label) 
+            n = min(n_wrist, n_chest)
+            total_samples += n
+
+            if n_wrist != n_chest:
+                print(f"Wrong number of windows for {subject}/{label}: wrist={n_wrist}, chest={n_chest}")
+                print()
     
     current_sample = 0
-    print(f"\nExtracting features from {total_samples} samples...")
+    print(f"Output directory: {OUT_DIR}")
+    print(f"Extracting features from {total_samples} samples...\n")
 
-    for label_category in data_split.VALID_LABELS.values():
-        n_wrist = getNumWindows(wrist_data, label_category)
-        n_chest = getNumWindows(chest_data, label_category)
-        n_windows = min(n_wrist, n_chest)
-        
-        for i in range(n_windows):
-            current_sample += 1
-            progress = (current_sample / total_samples) * 100
-            print(f"\rFeature extraction: {progress:.1f}% ({current_sample}/{total_samples}) - {label_category}", end="", flush=True)
+    for subject in wrist_data.keys():
+        for label_category in data_split.VALID_LABELS.values():
+            n_wrist = getNumWindows(wrist_data[subject], label_category)  
+            n_chest = getNumWindows(chest_data[subject], label_category)  
+            n_windows = min(n_wrist, n_chest)
             
-            extracted_features = extractFeatures(label_category, wrist_data, chest_data, i)
-            dataset.append(extracted_features)
+            for i in range(n_windows):
+                current_sample += 1
+                progress = (current_sample / total_samples) * 100
+                print(f"\rFeature extraction: {progress:.1f}% ({current_sample}/{total_samples}) - {subject}/{label_category}", end="", flush=True)
+                
+                extracted_features = extractFeatures(subject, label_category, wrist_data[subject], chest_data[subject], i)
+                dataset.append(extracted_features)
 
-    print()  
-    print("Feature vector length:", len(dataset[0]) - 1)
+    if CAL:
+        dataset = calibrateBySubjectBaseline(dataset)
+
     print(f"Total samples extracted: {len(dataset)}")
-
+    
     random.shuffle(dataset)
-    saveToParquet(dataset, output_dir="WESAD/train_8s")
+
+    print(f"First: {dataset[0]}")
+    saveToParquet(dataset, output_dir=OUT_DIR)
 
 
 if __name__ == "__main__":
